@@ -1,8 +1,9 @@
 import { AnyPrincipal, Effect, PolicyDocument, PolicyStatement, ServicePrincipal } from "@aws-cdk/aws-iam";
-import { NodejsFunction } from "@aws-cdk/aws-lambda-nodejs";
+import { Function, Code, Runtime } from "@aws-cdk/aws-lambda";
 import { LogGroup } from "@aws-cdk/aws-logs";
 import { readFileSync } from "fs";
 import * as path from "path";
+import { resolve } from "path";
 import {
   AccessLogFormat,
   ApiDefinition,
@@ -12,9 +13,10 @@ import {
 } from "@aws-cdk/aws-apigateway";
 import { Construct, Stack, StackProps } from "@aws-cdk/core";
 import { StringWizardServiceOperations } from "@smithy-demo/string-wizard-service-ssdk";
-import {Runtime} from "@aws-cdk/aws-lambda";
+import * as assets from "@aws-cdk/aws-s3-assets";
 
 export class CdkStack extends Stack {
+  public lambdaAsset: assets.Asset;
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
@@ -25,28 +27,24 @@ export class CdkStack extends Stack {
       Length: "length_handler",
     };
 
+    this.lambdaAsset = new assets.Asset(this, "LambdaAssetsZip", {
+      path: resolve(__dirname,"../src/"),
+    });
+
     const functions = (Object.keys(entry_points) as StringWizardServiceOperations[]).reduce(
       (acc, operation) => ({
         ...acc,
-        [operation]: new NodejsFunction(this, operation + "Function", {
-          entry: path.join(__dirname, `../src/${entry_points[operation]}.ts`),
-          handler: "lambdaHandler",
-          runtime: Runtime.NODEJS_14_X,
-          bundling: {
-            minify: true,
-            tsconfig: path.join(__dirname, "../tsconfig.json"),
-            // re2-wasm is used by the SSDK common library to do pattern validation, and uses
-            // a WASM module, so it's excluded from the bundle
-            nodeModules: ["re2-wasm"],
-
-            // Enable these for easier debugging, though they will increase your artifact size
-            // sourceMap: true,
-            // sourceMapMode: SourceMapMode.INLINE
-          },
+        [operation]: new Function(this, operation + "Function", {
+          runtime: Runtime.PYTHON_3_7,
+          code: Code.fromBucket(
+            this.lambdaAsset.bucket,
+            this.lambdaAsset.s3ObjectKey
+            ),
+          handler: `${entry_points[operation]}.lambda_handler`  // file is retrieved from map, function is "lambda_handler"
         }),
       }),
       {}
-    ) as { [op in StringWizardServiceOperations]: NodejsFunction };
+    ) as { [op in StringWizardServiceOperations]: Function };
 
     const api = new SpecRestApi(this, "StringWizardApi", {
       apiDefinition: ApiDefinition.fromInline(this.getOpenApiDef(functions)),
@@ -78,7 +76,7 @@ export class CdkStack extends Stack {
     }
   }
 
-  private getOpenApiDef(functions: { [op in StringWizardServiceOperations]?: NodejsFunction }) {
+  private getOpenApiDef(functions: { [op in StringWizardServiceOperations]?: Function }) {
     const openapi = JSON.parse(
       readFileSync(
         path.join(__dirname, "../codegen/build/smithyprojections/server-codegen/apigateway/openapi/StringWizard.openapi.json"),
