@@ -1,3 +1,9 @@
 {
-  "version" : "1.0"
+  "version" : "1.0",
+  "plugins": {
+    "openapi": {
+        "service": "software.amazon.smithy.demo#StringWizard",
+        "protocol": "aws.protocols#restJson1"
+    }
+}
 }
